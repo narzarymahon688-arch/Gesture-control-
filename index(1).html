@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Hand Gesture Phone Control — HUD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+
+    /* light fallback theme */
+    --bg: #EEF1F2;
+    --surface: #FFFFFF;
+    --border: #D4DBDD;
+    --text: #101418;
+    --text-muted: #5B6568;
+    --cyan: #0E8E8E;
+    --accent: #B4740A;
+    --danger: #C0392B;
+
+    --font-display: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
+    --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #070A0D;
+      --surface: #0D1318;
+      --border: #1C2B33;
+      --text: #E8F6F7;
+      --text-muted: #6C8690;
+      --cyan: #2EE6E6;
+      --accent: #FFC247;
+      --danger: #FF4365;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #070A0D;
+    --surface: #0D1318;
+    --border: #1C2B33;
+    --text: #E8F6F7;
+    --text-muted: #6C8690;
+    --cyan: #2EE6E6;
+    --accent: #FFC247;
+    --danger: #FF4365;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-display);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 480px; margin: 0 auto; padding: 0 18px 40px; }
+
+  header {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index: 6;
+    background: color-mix(in srgb, var(--bg) 85%, transparent);
+    backdrop-filter: blur(8px);
+    padding: 18px 0 12px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+  }
+  h1 { font-size: 1.2rem; font-weight: 700; margin: 0 0 2px; letter-spacing: -0.01em; }
+  .subtitle { font-size: 0.86rem; color: var(--text-muted); margin: 0; }
+
+  section { margin-bottom: 24px; }
+  .section-label { font-size: 0.78rem; color: var(--text-muted); margin: 0 0 10px; font-weight: 500; }
+
+  /* ---- viewfinder ---- */
+  .viewfinder {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: #000;
+    border-radius: 10px;
+    overflow: hidden;
+    transition: box-shadow 0.25s ease-out;
+  }
+  .viewfinder.tracking {
+    box-shadow: inset 0 0 0 1px var(--cyan), 0 0 18px -4px var(--cyan);
+  }
+  .viewfinder.alert-flash {
+    box-shadow: inset 0 0 0 3px var(--danger), 0 0 20px -2px var(--danger);
+  }
+
+  video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  canvas#overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+  .corner {
+    position: absolute; width: 22px; height: 22px;
+    border: 3px solid var(--cyan);
+    opacity: 0.7;
+    transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+    pointer-events: none;
+  }
+  .corner.tl { top: 8px; left: 8px; border-right: none; border-bottom: none; border-radius: 4px 0 0 0; }
+  .corner.tr { top: 8px; right: 8px; border-left: none; border-bottom: none; border-radius: 0 4px 0 0; }
+  .corner.bl { bottom: 8px; left: 8px; border-right: none; border-top: none; border-radius: 0 0 0 4px; }
+  .corner.br { bottom: 8px; right: 8px; border-left: none; border-top: none; border-radius: 0 0 4px 0; }
+  .viewfinder.flash .corner { opacity: 1; transform: scale(1.18); filter: drop-shadow(0 0 7px var(--cyan)); }
+
+  .scan-sweep {
+    position: absolute; left: 0; right: 0; height: 2px; top: 4%;
+    background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+    box-shadow: 0 0 8px var(--cyan);
+    opacity: 0; pointer-events: none;
+  }
+  .viewfinder.scanning .scan-sweep { opacity: 0.9; animation: sweep 2.2s linear infinite; }
+  @keyframes sweep { 0% { top: 4%; } 100% { top: 94%; } }
+
+  .idle-label {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #9FA8A8; font-size: 0.85rem; text-align: center; padding: 0 30px;
+  }
+
+  /* reticle (the cursor) */
+  .reticle {
+    position: absolute; left: 0; top: 0;
+    width: 40px; height: 40px;
+    border: 2px solid var(--cyan);
+    border-radius: 50%;
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1);
+    transition: opacity 0.2s, border-color 0.15s, transform 0.12s;
+    pointer-events: none;
+  }
+  .reticle::before, .reticle::after { content: ""; position: absolute; background: var(--cyan); }
+  .reticle::before { left: 50%; top: -9px; width: 2px; height: 8px; transform: translateX(-50%); }
+  .reticle::after { left: 50%; bottom: -9px; width: 2px; height: 8px; transform: translateX(-50%); }
+  .reticle.visible { opacity: 1; }
+  .reticle.locked { border-color: var(--accent); transform: translate(-50%, -50%) scale(1.2); }
+  .reticle.locked::before, .reticle.locked::after { background: var(--accent); }
+
+  /* HUD buttons inside the viewfinder */
+  .hud-btn {
+    position: absolute; bottom: 10px;
+    width: 58px; height: 42px;
+    background: rgba(7, 10, 13, 0.55);
+    border: 1px solid var(--cyan);
+    color: var(--cyan);
+    font-family: var(--font-mono);
+    font-size: 0.66rem; font-weight: 600; letter-spacing: 0.03em;
+    border-radius: 6px;
+    backdrop-filter: blur(2px);
+    transition: background 0.15s, transform 0.1s;
+  }
+  .hud-btn:active { transform: scale(0.94); }
+  .hud-btn.scan { left: 10px; }
+  .hud-btn.alert { right: 10px; border-color: var(--danger); color: var(--danger); }
+  .hud-btn.flash-fired { background: rgba(46, 230, 230, 0.35); }
+  .hud-btn.alert.flash-fired { background: rgba(255, 67, 101, 0.3); }
+
+  /* ---- controls ---- */
+  .controls { display: flex; gap: 10px; margin-top: 14px; }
+  .controls.secondary { margin-top: 10px; }
+
+  button {
+    font-family: var(--font-display); font-weight: 600; font-size: 0.9rem;
+    border-radius: 8px; padding: 12px 14px; min-height: 46px;
+    border: 1px solid transparent; cursor: pointer;
+  }
+  .btn-primary { flex: 1; background: var(--cyan); color: #021014; border-color: var(--cyan); }
+  .btn-primary:active { transform: scale(0.98); }
+  .btn-secondary, .btn-toggle { flex: 1; background: transparent; color: var(--text); border-color: var(--border); }
+  .btn-secondary[hidden] { display: none; }
+  .btn-toggle.on { background: var(--cyan); color: #021014; border-color: var(--cyan); }
+
+  /* ---- status ---- */
+  .status-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .status-text {
+    font-family: var(--font-mono); font-size: 0.98rem; font-weight: 600;
+    color: var(--cyan); margin: 0 0 8px; min-height: 1.4em;
+  }
+  .log { list-style: none; margin: 14px 0 0; padding: 10px 0 0; border-top: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 6px; }
+  .log li { font-family: var(--font-mono); font-size: 0.76rem; color: var(--text-muted); display: flex; justify-content: space-between; }
+  .log li span:first-child { color: var(--text); }
+
+  /* ---- flashlight row ---- */
+  .demo-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px;
+    display: flex; align-items: center; gap: 8px; font-size: 0.86rem; color: var(--text-muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--border); transition: background 0.2s, box-shadow 0.2s; }
+  .dot.on { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+  .legend { font-size: 0.87rem; line-height: 1.55; color: var(--text-muted); }
+  .legend p { margin: 0 0 10px; }
+  .legend strong { color: var(--text); }
+
+  .footnote { font-size: 0.78rem; color: var(--text-muted); border-top: 1px solid var(--border); padding-top: 14px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Hand gesture phone control</h1>
+      <p class="subtitle">Live landmark tracking — point, pinch, control</p>
+    </header>
+
+    <section>
+      <p class="section-label">Camera</p>
+      <div class="viewfinder" id="viewfinder">
+        <video id="camera" playsinline muted autoplay></video>
+        <canvas id="overlay"></canvas>
+        <div class="scan-sweep"></div>
+        <span class="corner tl"></span>
+        <span class="corner tr"></span>
+        <span class="corner bl"></span>
+        <span class="corner br"></span>
+        <div class="reticle" id="reticle"></div>
+        <button class="hud-btn scan" id="btnScan">SCAN</button>
+        <button class="hud-btn alert" id="btnAlert">ALERT</button>
+        <div class="idle-label" id="idleLabel">Tap "Start camera" to begin</div>
+      </div>
+      <div class="controls">
+        <button class="btn-primary" id="startBtn">Start camera</button>
+      </div>
+      <div class="controls secondary">
+        <button class="btn-secondary" id="switchBtn" hidden>Switch camera</button>
+        <button class="btn-toggle on" id="cursorBtn">Cursor: On</button>
+      </div>
+    </section>
+
+    <section>
+      <p class="section-label">Live reading</p>
+      <div class="status-card">
+        <p class="status-text" id="statusText">Waiting to start…</p>
+        <ul class="log" id="gestureLog"></ul>
+      </div>
+    </section>
+
+    <section>
+      <p class="section-label">Flashlight</p>
+      <div class="demo-card">
+        <span class="dot" id="flashDot"></span>
+        <span id="flashLabel">Off — make a fist to toggle</span>
+      </div>
+    </section>
+
+    <section class="legend">
+      <p class="section-label">How to test</p>
+      <p><strong>Cursor</strong> follows your index fingertip when the "Cursor" toggle is on. Turn it off any time and tracking continues without it.</p>
+      <p><strong>Pinch</strong> (touch thumb and index tip together) while the cursor is over SCAN or ALERT to click it — like a real tap.</p>
+      <p><strong>Make a fist</strong> anywhere in frame to toggle the flashlight indicator (a real flashlight too, on the back camera, if your browser supports it).</p>
+    </section>
+
+    <p class="footnote">Uses MediaPipe Hands, loaded from a CDN, for real 21-point hand tracking — the first start may take a few seconds while it loads. If it fails to load, the camera still works, just without tracking. All processing happens on your phone; no video leaves the device.</p>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+<script>
+(function () {
+  "use strict";
+
+  // ---- tunable constants ----
+  const FINGER_EXTEND_RATIO = 1.15;   // how much farther a fingertip must be from the wrist than its middle knuckle to count as "extended"
+  const OPEN_MIN_FINGERS = 3;         // fingers extended (out of 4, thumb excluded) to count as an open hand
+  const PINCH_RATIO = 0.55;           // thumb-to-index distance, relative to hand size, that counts as a pinch
+  const FIST_COOLDOWN_MS = 800;       // minimum time between two fist-triggered flashlight toggles
+  const CURSOR_SMOOTHING = 0.35;      // 0-1, higher = cursor follows your finger more instantly, lower = smoother/laggier
+
+  const HAND_CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
+    [9,13],[13,14],[14,15],[15,16],[13,17],[0,17],[17,18],[18,19],[19,20]];
+  const FINGER_TIPS = [4, 8, 12, 16, 20];
+
+  const video = document.getElementById("camera");
+  const overlay = document.getElementById("overlay");
+  const octx = overlay.getContext("2d");
+  const viewfinder = document.getElementById("viewfinder");
+  const idleLabel = document.getElementById("idleLabel");
+  const startBtn = document.getElementById("startBtn");
+  const switchBtn = document.getElementById("switchBtn");
+  const cursorBtn = document.getElementById("cursorBtn");
+  const statusText = document.getElementById("statusText");
+  const logList = document.getElementById("gestureLog");
+  const reticle = document.getElementById("reticle");
+  const flashDot = document.getElementById("flashDot");
+  const flashLabel = document.getElementById("flashLabel");
+  const btnScan = document.getElementById("btnScan");
+  const btnAlert = document.getElementById("btnAlert");
+
+  let stream = null;
+  let currentFacing = "user";
+  let running = false;
+  let busy = false;
+  let resultsReceived = false;
+  let handDetected = false;
+  let prevPose = "none";
+  let prevPinching = false;
+  let lastFistTime = 0;
+  let flashlightOn = false;
+  let cursorEnabled = true;
+  let cursorX = 0, cursorY = 0, cursorInit = false;
+  let eventLog = [];
+  let audioCtx = null;
+
+  // ---- hand-tracking engine ----
+  let handsReady = (typeof Hands !== "undefined");
+  let hands = null;
+  if (handsReady) {
+    try {
+      hands = new Hands({
+        locateFile: function (file) {
+          return "https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/" + file;
+        }
+      });
+      hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 0,      // 0 = faster/lighter, 1 = more accurate but slower on weaker phones
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.5,
+        selfieMode: false        // we handle mirroring ourselves, for both the overlay and the cursor
+      });
+      hands.onResults(onResults);
+    } catch (e) {
+      handsReady = false;
+    }
+  }
+
+  function dist(a, b) {
+    const dx = a.x - b.x, dy = a.y - b.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function fingerExtended(hand, tipIdx, pipIdx) {
+    const wrist = hand[0];
+    return dist(wrist, hand[tipIdx]) > dist(wrist, hand[pipIdx]) * FINGER_EXTEND_RATIO;
+  }
+
+  function vibrate(pattern) {
+    if (navigator.vibrate) { try { navigator.vibrate(pattern); } catch (e) {} }
+  }
+
+  function beep(freq, dur) {
+    try {
+      if (!audioCtx) return;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.frequency.value = freq;
+      osc.type = "sine";
+      gain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.15, audioCtx.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + dur);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(); osc.stop(audioCtx.currentTime + dur);
+    } catch (e) {}
+  }
+
+  function flashCorners() {
+    viewfinder.classList.add("flash");
+    setTimeout(function () { viewfinder.classList.remove("flash"); }, 300);
+  }
+
+  function logEvent(text) {
+    eventLog.unshift({ text: text, time: Date.now() });
+    eventLog = eventLog.slice(0, 5);
+    logList.innerHTML = "";
+    eventLog.forEach(function (entry) {
+      const li = document.createElement("li");
+      const label = document.createElement("span");
+      label.textContent = entry.text;
+      const time = document.createElement("span");
+      time.textContent = new Date(entry.time).toLocaleTimeString();
+      li.appendChild(label); li.appendChild(time);
+      logList.appendChild(li);
+    });
+  }
+
+  function updateFlashUI(realTried, realWorked) {
+    flashDot.classList.toggle("on", flashlightOn);
+    if (!flashlightOn) {
+      flashLabel.textContent = "Off — make a fist to toggle";
+    } else if (currentFacing === "environment" && realTried && realWorked) {
+      flashLabel.textContent = "On (real flashlight)";
+    } else if (currentFacing === "environment" && realTried && !realWorked) {
+      flashLabel.textContent = "On (visual only — not supported on this device)";
+    } else {
+      flashLabel.textContent = "On (visual only — switch to back camera for real)";
+    }
+  }
+
+  async function setTorch(on) {
+    if (!stream || currentFacing !== "environment") { updateFlashUI(false, false); return; }
+    const track = stream.getVideoTracks()[0];
+    if (!track || !track.getCapabilities) { updateFlashUI(false, false); return; }
+    let caps = {};
+    try { caps = track.getCapabilities(); } catch (e) {}
+    if (caps && caps.torch) {
+      try { await track.applyConstraints({ advanced: [{ torch: on }] }); updateFlashUI(true, true); }
+      catch (e) { updateFlashUI(true, false); }
+    } else {
+      updateFlashUI(true, false);
+    }
+  }
+
+  function toggleFlashlight() {
+    flashlightOn = !flashlightOn;
+    vibrate([80, 40, 80]);
+    beep(flashlightOn ? 660 : 440, 0.08);
+    logEvent(flashlightOn ? "Flashlight on" : "Flashlight off");
+    flashCorners();
+    setTorch(flashlightOn);
+  }
+
+  function triggerScan() {
+    const sig = (70 + Math.random() * 29).toFixed(0);
+    logEvent("Scan complete — signature " + sig + "%");
+    vibrate(50);
+    beep(880, 0.12);
+    btnScan.classList.add("flash-fired");
+    setTimeout(function () { btnScan.classList.remove("flash-fired"); }, 250);
+    flashCorners();
+  }
+
+  function triggerAlert() {
+    logEvent("Alert triggered");
+    vibrate([100, 60, 100, 60, 100]);
+    beep(220, 0.18);
+    viewfinder.classList.add("alert-flash");
+    setTimeout(function () { viewfinder.classList.remove("alert-flash"); }, 500);
+    btnAlert.classList.add("flash-fired");
+    setTimeout(function () { btnAlert.classList.remove("flash-fired"); }, 250);
+  }
+
+  btnScan.addEventListener("click", triggerScan);
+  btnAlert.addEventListener("click", triggerAlert);
+
+  function hitTestButtons(pageX, pageY) {
+    const btns = [btnScan, btnAlert];
+    for (let i = 0; i < btns.length; i++) {
+      const r = btns[i].getBoundingClientRect();
+      if (pageX >= r.left && pageX <= r.right && pageY >= r.top && pageY <= r.bottom) return btns[i];
+    }
+    return null;
+  }
+
+  function renderReticle(x, y, locked) {
+    reticle.style.left = x + "px";
+    reticle.style.top = y + "px";
+    reticle.classList.add("visible");
+    reticle.classList.toggle("locked", locked);
+  }
+
+  function drawOverlay(results) {
+    octx.clearRect(0, 0, overlay.width, overlay.height);
+    const hand = results.multiHandLandmarks && results.multiHandLandmarks[0];
+    if (!hand) return;
+    octx.save();
+    if (currentFacing === "user") { octx.translate(overlay.width, 0); octx.scale(-1, 1); }
+    octx.lineWidth = 2;
+    octx.strokeStyle = "rgba(46,230,230,0.85)";
+    octx.shadowColor = "rgba(46,230,230,0.9)";
+    octx.shadowBlur = 8;
+    HAND_CONNECTIONS.forEach(function (pair) {
+      const a = hand[pair[0]], b = hand[pair[1]];
+      octx.beginPath();
+      octx.moveTo(a.x * overlay.width, a.y * overlay.height);
+      octx.lineTo(b.x * overlay.width, b.y * overlay.height);
+      octx.stroke();
+    });
+    hand.forEach(function (pt, idx) {
+      const isTip = FINGER_TIPS.indexOf(idx) !== -1;
+      octx.beginPath();
+      octx.fillStyle = isTip ? "#FFC247" : "rgba(46,230,230,0.9)";
+      octx.shadowColor = isTip ? "#FFC247" : "rgba(46,230,230,0.9)";
+      octx.arc(pt.x * overlay.width, pt.y * overlay.height, isTip ? 4.5 : 3, 0, Math.PI * 2);
+      octx.fill();
+    });
+    octx.restore();
+  }
+
+  function onResults(results) {
+    resultsReceived = true;
+    drawOverlay(results);
+    const hand = results.multiHandLandmarks && results.multiHandLandmarks[0];
+    handDetected = !!hand;
+
+    if (hand) {
+      const indexExt = fingerExtended(hand, 8, 6);
+      const middleExt = fingerExtended(hand, 12, 10);
+      const ringExt = fingerExtended(hand, 16, 14);
+      const pinkyExt = fingerExtended(hand, 20, 18);
+      const extCount = [indexExt, middleExt, ringExt, pinkyExt].filter(Boolean).length;
+      const scale = dist(hand[0], hand[9]) || 0.0001;
+      const isPinching = (dist(hand[4], hand[8]) / scale) < PINCH_RATIO;
+
+      let pose = "partial";
+      if (extCount >= OPEN_MIN_FINGERS) pose = "open";
+      else if (extCount === 0) pose = "fist";
+
+      const now = Date.now();
+      if (pose === "fist" && prevPose !== "fist" && now - lastFistTime > FIST_COOLDOWN_MS) {
+        toggleFlashlight();
+        lastFistTime = now;
+      }
+      prevPose = pose;
+
+      if (cursorEnabled) {
+        const tip = hand[8];
+        let nx = tip.x;
+        if (currentFacing === "user") nx = 1 - nx;
+        const ny = tip.y;
+        const vfRect = viewfinder.getBoundingClientRect();
+        const targetX = nx * vfRect.width;
+        const targetY = ny * vfRect.height;
+        if (!cursorInit) { cursorX = targetX; cursorY = targetY; cursorInit = true; }
+        else {
+          cursorX += (targetX - cursorX) * CURSOR_SMOOTHING;
+          cursorY += (targetY - cursorY) * CURSOR_SMOOTHING;
+        }
+        const pageX = vfRect.left + cursorX, pageY = vfRect.top + cursorY;
+        const hoverHit = hitTestButtons(pageX, pageY);
+        renderReticle(cursorX, cursorY, !!hoverHit);
+        if (isPinching && !prevPinching && hoverHit) hoverHit.click();
+      } else {
+        reticle.classList.remove("visible");
+        cursorInit = false;
+      }
+      prevPinching = isPinching;
+
+      statusText.textContent = "Hand tracked — " + pose.toUpperCase();
+      viewfinder.classList.add("tracking");
+      viewfinder.classList.remove("scanning");
+    } else {
+      prevPose = "none";
+      prevPinching = false;
+      cursorInit = false;
+      reticle.classList.remove("visible");
+      if (running) {
+        statusText.textContent = "Scanning for a hand…";
+        viewfinder.classList.add("scanning");
+        viewfinder.classList.remove("tracking");
+      }
+    }
+  }
+
+  function resizeOverlay() {
+    const rect = viewfinder.getBoundingClientRect();
+    overlay.width = rect.width;
+    overlay.height = rect.height;
+  }
+  window.addEventListener("resize", resizeOverlay);
+  window.addEventListener("orientationchange", resizeOverlay);
+
+  async function frameLoop() {
+    if (running && handsReady && !busy && video.readyState >= 2) {
+      busy = true;
+      try { await hands.send({ image: video }); }
+      catch (e) { handsReady = false; statusText.textContent = "Hand-tracking failed — showing camera only."; }
+      busy = false;
+    }
+    requestAnimationFrame(frameLoop);
+  }
+  requestAnimationFrame(frameLoop);
+
+  function stopCamera() {
+    if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+    running = false;
+    startBtn.textContent = "Start camera";
+    switchBtn.hidden = true;
+    idleLabel.style.display = "flex";
+    viewfinder.classList.remove("tracking", "scanning");
+    reticle.classList.remove("visible");
+    octx.clearRect(0, 0, overlay.width, overlay.height);
+  }
+
+  async function startCamera(facing) {
+    stopCamera();
+    statusText.textContent = "Starting camera…";
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: facing, width: { ideal: 480 }, height: { ideal: 360 } },
+        audio: false
+      });
+    } catch (err) {
+      const reason = (err && err.name) ? err.name : "Unknown";
+      const detail = (err && err.message) ? err.message : "";
+      statusText.textContent = "Camera error: " + reason + (detail ? " — " + detail : "");
+      return;
+    }
+    video.srcObject = stream;
+    try { await video.play(); } catch (e) {}
+    currentFacing = facing;
+    video.style.transform = facing === "user" ? "scaleX(-1)" : "none";
+    idleLabel.style.display = "none";
+    resizeOverlay();
+    running = true;
+    resultsReceived = false;
+    startBtn.textContent = "Stop camera";
+    switchBtn.hidden = false;
+    statusText.textContent = handsReady ? "Loading hand-tracking model…" : "Camera only — hand-tracking unavailable.";
+    viewfinder.classList.add("scanning");
+    updateFlashUI(false, false);
+  }
+
+  startBtn.addEventListener("click", async function () {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    } else if (audioCtx.state === "suspended") {
+      try { await audioCtx.resume(); } catch (e) {}
+    }
+    if (running) { stopCamera(); statusText.textContent = "Camera stopped."; }
+    else { await startCamera(currentFacing); }
+  });
+
+  switchBtn.addEventListener("click", async function () {
+    const next = currentFacing === "user" ? "environment" : "user";
+    await startCamera(next);
+  });
+
+  cursorBtn.addEventListener("click", function () {
+    cursorEnabled = !cursorEnabled;
+    cursorBtn.textContent = "Cursor: " + (cursorEnabled ? "On" : "Off");
+    cursorBtn.classList.toggle("on", cursorEnabled);
+    if (!cursorEnabled) { reticle.classList.remove("visible"); cursorInit = false; }
+  });
+})();
+</script>
+</body>
+</html>
